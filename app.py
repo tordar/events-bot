@@ -253,12 +253,47 @@ def subscribe():
             'genres': genres
         }
         result = subscribers_collection.insert_one(subscriber)
+        print(f"Subscriber added to database with id: {result.inserted_id}")
 
         # Send confirmation email
-        email_sent = send_confirmation_email(email)
+        confirmation_sent = send_subscription_confirmation(email)
+
+        # Fetch and send filtered events
+        all_events = fetch_new_events()
+        filtered_events = []
+
+        for event in all_events:
+            venue_match = False
+            genre_match = False
+
+            if venues:
+                venue_match = event['venue']['name'] in venues
+            else:
+                venue_match = True
+
+            if genres:
+                genre_match = any(tag in genres for tag in event.get('tags', []))
+            else:
+                genre_match = True
+
+            if venue_match and genre_match:
+                filtered_events.append(event)
+
+        if filtered_events:
+            html_content = render_template('email_template.html',
+                                           events=filtered_events,
+                                           email=email)
+            message = Mail(
+                from_email=FROM_EMAIL,
+                to_emails=email,
+                subject='Your First Event Update',
+                html_content=html_content
+            )
+            sendgrid_client.send(message)
+            print(f"First event update sent to {email} with {len(filtered_events)} events")
 
         response_message = 'Subscribed successfully'
-        if not email_sent:
+        if not confirmation_sent:
             response_message += ' (confirmation email could not be sent)'
 
         return jsonify({'message': response_message}), 200
@@ -281,7 +316,6 @@ def test_weekly_email(email):
 
         # Fetch events
         all_events = fetch_new_events()
-
 
         # Get preferences - handle both old and new structure
         preferred_venues = subscriber.get('preferences', {}).get('venues', []) or subscriber.get('venues', [])
