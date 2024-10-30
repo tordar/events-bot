@@ -3,15 +3,17 @@ from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 import os
+import json
 from dotenv import load_dotenv
-from datetime import datetime
-import ssl
+from datetime import datetime, timedelta
 from broadcast_api import BroadcastAPI
+import ssl
 
 # Load environment variables
 load_dotenv()
-
 
 # Initialize Flask with explicit template folder
 template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'templates'))
@@ -26,6 +28,7 @@ client = None
 db = None
 subscribers_collection = None
 sendgrid_client = None
+scheduler = None
 
 
 def init_mongodb():
@@ -65,6 +68,24 @@ def init_sendgrid():
         pass
 
 
+def init_scheduler():
+    global scheduler
+    try:
+        scheduler = BackgroundScheduler()
+        # Schedule weekly email to be sent every Monday at 9 AM
+        scheduler.add_job(
+            send_weekly_updates,
+            CronTrigger(day_of_week='mon', hour=9, minute=0),
+            id='weekly_updates',
+            replace_existing=True
+        )
+        scheduler.start()
+        print("Scheduler initialized successfully")
+    except Exception as e:
+        print(f"Scheduler initialization error: {str(e)}")
+        pass
+
+
 def send_confirmation_email(to_email):
     if not sendgrid_client:
         print("SendGrid client not initialized")
@@ -86,11 +107,39 @@ def send_confirmation_email(to_email):
         return False
 
 
-# Add these imports at the top
-from broadcast_api import BroadcastAPI
+def send_weekly_updates():
+    if not subscribers_collection or not sendgrid_client:
+        print("Services not initialized")
+        return
+
+    try:
+        # Fetch new events
+        events = fetch_new_events()
+        if not events:
+            print("No events to send")
+            return
+
+        # Get all subscribers
+        subscribers = subscribers_collection.find()
+
+        for subscriber in subscribers:
+            try:
+                html_content = render_template('email_template.html', events=events)
+                message = Mail(
+                    from_email=FROM_EMAIL,
+                    to_emails=subscriber['email'],
+                    subject='Weekly Event Update',
+                    html_content=html_content
+                )
+                response = sendgrid_client.send(message)
+                print(f"Weekly update sent to {subscriber['email']}. Status Code: {response.status_code}")
+            except Exception as e:
+                print(f"Error sending weekly update to {subscriber['email']}: {str(e)}")
+
+    except Exception as e:
+        print(f"Error in weekly update job: {str(e)}")
 
 
-# Add this function after your other initialization functions
 def fetch_new_events():
     try:
         api = BroadcastAPI()
@@ -109,17 +158,35 @@ def fetch_new_events():
         return []
 
 
-
-
-
 # Initialize services
 init_mongodb()
 init_sendgrid()
+init_scheduler()
 
 
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/get_venues')
+def get_venues():
+    try:
+        with open('venue_names.json', 'r') as f:
+            venues = json.load(f)
+        return jsonify(venues)
+    except Exception as e:
+        print(f"Error loading venues: {str(e)}")
+        return jsonify({'venue_names': []}), 500
+
+@app.route('/get_genres')
+def get_genres():
+    try:
+        with open('distinct_tags.json', 'r') as f:
+            genres = json.load(f)
+        return jsonify(genres)
+    except Exception as e:
+        print(f"Error loading genres: {str(e)}")
+        return jsonify({'tags': []}), 500
 
 
 @app.route('/subscribe', methods=['POST'])
@@ -151,6 +218,29 @@ def subscribe():
         return jsonify({'message': f'Error subscribing: {str(e)}'}), 500
 
 
+@app.route('/test-weekly-email/<email>')
+def test_weekly_email(email):
+    try:
+        events = fetch_new_events()
+        html_content = render_template('email_template.html', events=events)
+        message = Mail(
+            from_email=FROM_EMAIL,
+            to_emails=email,
+            subject='Weekly Event Update',
+            html_content=html_content
+        )
+        response = sendgrid_client.send(message)
+        return jsonify({
+            'status': 'success',
+            'message': f'Test weekly email sent. Status Code: {response.status_code}'
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+
 @app.route('/health')
 def health():
     status = {
@@ -159,7 +249,8 @@ def health():
         'services': {
             'mongodb': 'disconnected',
             'sendgrid': 'disconnected',
-            'events': 'disconnected'
+            'events': 'disconnected',
+            'scheduler': 'disconnected'
         }
     }
 
@@ -182,26 +273,21 @@ def health():
     except Exception as e:
         status['services']['events'] = f'error: {str(e)}'
 
-    is_healthy = all(s == 'connected' or s == 'initialized' or s.startswith('connected')
+    try:
+        if scheduler and scheduler.running:
+            next_run = scheduler.get_job('weekly_updates').next_run_time
+            status['services']['scheduler'] = f'running (next run: {next_run.isoformat()})'
+        else:
+            status['services']['scheduler'] = 'not running'
+    except Exception as e:
+        status['services']['scheduler'] = f'error: {str(e)}'
+
+    is_healthy = all(s == 'connected' or s == 'initialized' or
+                     s.startswith('connected') or s.startswith('running')
                      for s in status['services'].values())
 
     return jsonify(status), 200 if is_healthy else 503
 
-# Add this new route after your other routes
-@app.route('/events')
-def get_events():
-    try:
-        events = fetch_new_events()
-        return jsonify({
-            'status': 'success',
-            'count': len(events),
-            'events': events
-        }), 200
-    except Exception as e:
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
