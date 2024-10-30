@@ -117,29 +117,44 @@ def send_weekly_updates():
     try:
         # Fetch new events
         all_events = fetch_new_events()
-        if not all_events:
-            print("No events to send")
-            return
 
         # Get all subscribers
         subscribers = subscribers_collection.find()
 
         for subscriber in subscribers:
             try:
-                # Filter events based on subscriber preferences
-                preferred_venues = subscriber.get('venues', [])
-                preferred_genres = subscriber.get('genres', [])
+                # Get preferences
+                preferences = subscriber.get('preferences', {})
+                preferred_venues = preferences.get('venues', [])
+                preferred_genres = preferences.get('genres', [])
+
+                # Skip if no preferences set
+                if not preferred_venues and not preferred_genres:
+                    print(f"Skipping subscriber {subscriber['email']}: No preferences set")
+                    continue
 
                 filtered_events = []
                 for event in all_events:
-                    venue_match = not preferred_venues or event['venue']['name'] in preferred_venues
-                    genre_match = not preferred_genres or any(tag in preferred_genres for tag in event.get('tags', []))
+                    venue_match = False
+                    genre_match = False
+
+                    if preferred_venues:
+                        venue_match = event['venue']['name'] in preferred_venues
+                    else:
+                        venue_match = True
+
+                    if preferred_genres:
+                        genre_match = any(tag in preferred_genres for tag in event.get('tags', []))
+                    else:
+                        genre_match = True
 
                     if venue_match and genre_match:
                         filtered_events.append(event)
 
                 if filtered_events:
-                    html_content = render_template('email_template.html', events=filtered_events)
+                    html_content = render_template('email_template.html',
+                                                   events=filtered_events,
+                                                   email=subscriber['email'])
                     message = Mail(
                         from_email=FROM_EMAIL,
                         to_emails=subscriber['email'],
@@ -147,7 +162,11 @@ def send_weekly_updates():
                         html_content=html_content
                     )
                     response = sendgrid_client.send(message)
-                    print(f"Weekly update sent to {subscriber['email']}. Status Code: {response.status_code}")
+                    print(
+                        f"Weekly update sent to {subscriber['email']} with {len(filtered_events)} events. Status: {response.status_code}")
+                else:
+                    print(f"No matching events for subscriber {subscriber['email']}")
+
             except Exception as e:
                 print(f"Error sending weekly update to {subscriber['email']}: {str(e)}")
 
@@ -260,24 +279,57 @@ def test_weekly_email(email):
                 'message': 'Email not found. Only subscribers can receive test emails.'
             }), 404
 
-        # Fetch and filter events based on subscriber preferences
+        # Fetch events
         all_events = fetch_new_events()
-        preferred_venues = subscriber.get('preferences', {}).get('venues', [])
-        preferred_genres = subscriber.get('preferences', {}).get('genres', [])
+
+        # Get preferences, defaulting to empty lists
+        preferences = subscriber.get('preferences', {})
+        preferred_venues = preferences.get('venues', [])
+        preferred_genres = preferences.get('genres', [])
+
+        # Check if any preferences are set
+        if not preferred_venues and not preferred_genres:
+            return jsonify({
+                'status': 'warning',
+                'message': 'No preferences set. Please set venue or genre preferences to receive event updates.',
+                'preferences': {
+                    'venues': preferred_venues,
+                    'genres': preferred_genres
+                }
+            }), 400
 
         filtered_events = []
         for event in all_events:
-            # Check if event matches subscriber's preferences
-            venue_match = not preferred_venues or event['venue']['name'] in preferred_venues
-            genre_match = not preferred_genres or any(tag in preferred_genres for tag in event.get('tags', []))
+            # Initialize match flags
+            venue_match = False
+            genre_match = False
 
+            # Check venue preference
+            if preferred_venues:
+                venue_match = event['venue']['name'] in preferred_venues
+            else:
+                # If no venues specified, any venue is acceptable
+                venue_match = True
+
+            # Check genre preference
+            if preferred_genres:
+                genre_match = any(tag in preferred_genres for tag in event.get('tags', []))
+            else:
+                # If no genres specified, any genre is acceptable
+                genre_match = True
+
+            # Only add event if it matches both venue and genre preferences
             if venue_match and genre_match:
                 filtered_events.append(event)
 
         if not filtered_events:
             return jsonify({
                 'status': 'warning',
-                'message': 'No events match your preferences for the selected period.'
+                'message': 'No events match your preferences for the selected period.',
+                'preferences': {
+                    'venues': preferred_venues,
+                    'genres': preferred_genres
+                }
             }), 200
 
         # Send email with filtered events
