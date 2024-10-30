@@ -256,7 +256,7 @@ def subscribe():
         print(f"Subscriber added to database with id: {result.inserted_id}")
 
         # Send confirmation email
-        confirmation_sent = send_subscription_confirmation(email)
+        confirmation_sent = send_confirmation_email(email)
 
         # Fetch and send filtered events
         all_events = fetch_new_events()
