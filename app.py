@@ -7,6 +7,7 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime
 import ssl
+from broadcast_api import BroadcastAPI
 
 # Load environment variables
 load_dotenv()
@@ -85,6 +86,32 @@ def send_confirmation_email(to_email):
         return False
 
 
+# Add these imports at the top
+from broadcast_api import BroadcastAPI
+
+
+# Add this function after your other initialization functions
+def fetch_new_events():
+    try:
+        api = BroadcastAPI()
+        all_events = api.get_upcoming_events()
+        one_week_ago = datetime.utcnow() - timedelta(days=7)
+
+        new_events = []
+        for event in all_events:
+            event_time = datetime.fromisoformat(event['start_time'].replace('Z', '+00:00'))
+            if event_time > one_week_ago:
+                new_events.append(event)
+
+        return new_events
+    except Exception as e:
+        print(f"Error fetching events: {str(e)}")
+        return []
+
+
+
+
+
 # Initialize services
 init_mongodb()
 init_sendgrid()
@@ -131,7 +158,8 @@ def health():
         'timestamp': datetime.utcnow().isoformat(),
         'services': {
             'mongodb': 'disconnected',
-            'sendgrid': 'disconnected'
+            'sendgrid': 'disconnected',
+            'events': 'disconnected'
         }
     }
 
@@ -148,11 +176,32 @@ def health():
     except Exception as e:
         status['services']['sendgrid'] = f'error: {str(e)}'
 
-    is_healthy = all(s == 'connected' or s == 'initialized'
+    try:
+        events = fetch_new_events()
+        status['services']['events'] = f'connected ({len(events)} events)'
+    except Exception as e:
+        status['services']['events'] = f'error: {str(e)}'
+
+    is_healthy = all(s == 'connected' or s == 'initialized' or s.startswith('connected')
                      for s in status['services'].values())
 
     return jsonify(status), 200 if is_healthy else 503
 
+# Add this new route after your other routes
+@app.route('/events')
+def get_events():
+    try:
+        events = fetch_new_events()
+        return jsonify({
+            'status': 'success',
+            'count': len(events),
+            'events': events
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
