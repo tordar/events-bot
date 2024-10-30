@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from broadcast_api import BroadcastAPI
 import ssl
+import pytz
+from dateutil import parser
 
 # Load environment variables
 load_dotenv()
@@ -157,13 +159,25 @@ def fetch_new_events():
     try:
         api = BroadcastAPI()
         all_events = api.get_upcoming_events()
-        one_week_ago = datetime.utcnow() - timedelta(days=7)
+        # Make sure we have a timezone-aware datetime for comparison
+        one_week_ago = datetime.now(pytz.UTC) - timedelta(days=7)
 
         new_events = []
         for event in all_events:
-            event_time = datetime.fromisoformat(event['start_time'].replace('Z', '+00:00'))
-            if event_time > one_week_ago:
-                new_events.append(event)
+            try:
+                # Parse the event time and ensure it's timezone-aware
+                event_time = parser.parse(event['start_time'])
+                if event_time.tzinfo is None:
+                    # If the datetime is naive, make it timezone-aware
+                    event_time = pytz.UTC.localize(event_time)
+
+                if event_time > one_week_ago:
+                    # Format the time for display
+                    event['start_time'] = event_time.strftime('%Y-%m-%d %H:%M:%S %Z')
+                    new_events.append(event)
+            except Exception as e:
+                print(f"Error processing event: {str(e)}")
+                continue
 
         return new_events
     except Exception as e:
@@ -238,8 +252,38 @@ def subscribe():
 @app.route('/test-weekly-email/<email>')
 def test_weekly_email(email):
     try:
-        events = fetch_new_events()
-        html_content = render_template('email_template.html', events=events)
+        # First, verify this is a subscriber
+        subscriber = subscribers_collection.find_one({'email': email})
+        if not subscriber:
+            return jsonify({
+                'status': 'error',
+                'message': 'Email not found. Only subscribers can receive test emails.'
+            }), 404
+
+        # Fetch and filter events based on subscriber preferences
+        all_events = fetch_new_events()
+        preferred_venues = subscriber.get('preferences', {}).get('venues', [])
+        preferred_genres = subscriber.get('preferences', {}).get('genres', [])
+
+        filtered_events = []
+        for event in all_events:
+            # Check if event matches subscriber's preferences
+            venue_match = not preferred_venues or event['venue']['name'] in preferred_venues
+            genre_match = not preferred_genres or any(tag in preferred_genres for tag in event.get('tags', []))
+
+            if venue_match and genre_match:
+                filtered_events.append(event)
+
+        if not filtered_events:
+            return jsonify({
+                'status': 'warning',
+                'message': 'No events match your preferences for the selected period.'
+            }), 200
+
+        # Send email with filtered events
+        html_content = render_template('email_template.html',
+                                       events=filtered_events,
+                                       email=email)
         message = Mail(
             from_email=FROM_EMAIL,
             to_emails=email,
@@ -247,9 +291,14 @@ def test_weekly_email(email):
             html_content=html_content
         )
         response = sendgrid_client.send(message)
+
         return jsonify({
             'status': 'success',
-            'message': f'Test weekly email sent. Status Code: {response.status_code}'
+            'message': f'Test email sent with {len(filtered_events)} matching events. Status Code: {response.status_code}',
+            'preferences': {
+                'venues': preferred_venues,
+                'genres': preferred_genres
+            }
         }), 200
     except Exception as e:
         return jsonify({
