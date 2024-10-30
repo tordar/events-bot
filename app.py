@@ -1,20 +1,27 @@
 from flask import Flask, render_template, request, jsonify
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
 import os
 from dotenv import load_dotenv
 from datetime import datetime
+import ssl
 
 # Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
 
-# MongoDB setup with timeout configuration
+# MongoDB setup with SSL configuration
 MONGO_URI = os.getenv('MONGO_URI')
+SENDGRID_API_KEY = os.getenv('SENDGRID_API_KEY')
+FROM_EMAIL = os.getenv('FROM_EMAIL')
+
 client = None
 db = None
 subscribers_collection = None
+sendgrid_client = None
 
 
 def init_mongodb():
@@ -24,7 +31,11 @@ def init_mongodb():
             MONGO_URI,
             serverSelectionTimeoutMS=5000,
             connectTimeoutMS=5000,
-            socketTimeoutMS=5000
+            socketTimeoutMS=5000,
+            ssl=True,
+            ssl_cert_reqs=ssl.CERT_NONE,
+            tls=True,
+            tlsAllowInvalidCertificates=True
         )
         # Test connection
         client.admin.command('ping')
@@ -37,11 +48,43 @@ def init_mongodb():
 
     except Exception as e:
         print(f"MongoDB connection error: {str(e)}")
-        raise
+        pass
 
 
-# Initialize MongoDB connection
+def init_sendgrid():
+    global sendgrid_client
+    try:
+        sendgrid_client = SendGridAPIClient(SENDGRID_API_KEY)
+        print("SendGrid client initialized successfully")
+    except Exception as e:
+        print(f"SendGrid initialization error: {str(e)}")
+        pass
+
+
+def send_confirmation_email(to_email):
+    if not sendgrid_client:
+        print("SendGrid client not initialized")
+        return False
+
+    try:
+        html_content = render_template('subscription_confirmation.html')
+        message = Mail(
+            from_email=FROM_EMAIL,
+            to_emails=to_email,
+            subject='Subscription Confirmed - Event Updates',
+            html_content=html_content
+        )
+        response = sendgrid_client.send(message)
+        print(f"Confirmation email sent to {to_email}. Status Code: {response.status_code}")
+        return True
+    except Exception as e:
+        print(f"Error sending confirmation email: {str(e)}")
+        return False
+
+
+# Initialize services
 init_mongodb()
+init_sendgrid()
 
 
 @app.route('/')
@@ -51,6 +94,9 @@ def index():
 
 @app.route('/subscribe', methods=['POST'])
 def subscribe():
+    if not subscribers_collection:
+        return jsonify({'message': 'Database connection not available'}), 503
+
     data = request.json
     email = data.get('email')
 
@@ -60,7 +106,15 @@ def subscribe():
             'subscribed_at': datetime.utcnow()
         }
         result = subscribers_collection.insert_one(subscriber)
-        return jsonify({'message': 'Subscribed successfully'}), 200
+
+        # Send confirmation email
+        email_sent = send_confirmation_email(email)
+
+        response_message = 'Subscribed successfully'
+        if not email_sent:
+            response_message += ' (confirmation email could not be sent)'
+
+        return jsonify({'message': response_message}), 200
     except Exception as e:
         if 'duplicate key error' in str(e):
             return jsonify({'message': 'Already subscribed'}), 400
@@ -69,20 +123,32 @@ def subscribe():
 
 @app.route('/health')
 def health():
+    status = {
+        'status': 'healthy',
+        'timestamp': datetime.utcnow().isoformat(),
+        'services': {
+            'mongodb': 'disconnected',
+            'sendgrid': 'disconnected'
+        }
+    }
+
     try:
-        # Test MongoDB connection
-        client.admin.command('ping')
-        return jsonify({
-            'status': 'healthy',
-            'mongodb': 'connected',
-            'timestamp': datetime.utcnow().isoformat()
-        }), 200
+        if client:
+            client.admin.command('ping')
+            status['services']['mongodb'] = 'connected'
     except Exception as e:
-        return jsonify({
-            'status': 'unhealthy',
-            'error': str(e),
-            'timestamp': datetime.utcnow().isoformat()
-        }), 500
+        status['services']['mongodb'] = f'error: {str(e)}'
+
+    try:
+        if sendgrid_client:
+            status['services']['sendgrid'] = 'initialized'
+    except Exception as e:
+        status['services']['sendgrid'] = f'error: {str(e)}'
+
+    is_healthy = all(s == 'connected' or s == 'initialized'
+                     for s in status['services'].values())
+
+    return jsonify(status), 200 if is_healthy else 503
 
 
 if __name__ == '__main__':
