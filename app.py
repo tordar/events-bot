@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, jsonify
 from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure
 import os
 from dotenv import load_dotenv
 from datetime import datetime
@@ -9,14 +10,38 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# MongoDB setup
+# MongoDB setup with timeout configuration
 MONGO_URI = os.getenv('MONGO_URI')
-client = MongoClient(MONGO_URI)
-db = client['event_subscription_db']
-subscribers_collection = db['subscribers']
+client = None
+db = None
+subscribers_collection = None
 
-# Create index for email uniqueness
-subscribers_collection.create_index([('email', 1)], unique=True)
+
+def init_mongodb():
+    global client, db, subscribers_collection
+    try:
+        client = MongoClient(
+            MONGO_URI,
+            serverSelectionTimeoutMS=5000,
+            connectTimeoutMS=5000,
+            socketTimeoutMS=5000
+        )
+        # Test connection
+        client.admin.command('ping')
+        print("MongoDB connection successful")
+
+        db = client['event_subscription_db']
+        subscribers_collection = db['subscribers']
+        # Create index for email uniqueness
+        subscribers_collection.create_index([('email', 1)], unique=True)
+
+    except Exception as e:
+        print(f"MongoDB connection error: {str(e)}")
+        raise
+
+
+# Initialize MongoDB connection
+init_mongodb()
 
 
 @app.route('/')
@@ -47,9 +72,17 @@ def health():
     try:
         # Test MongoDB connection
         client.admin.command('ping')
-        return jsonify({'status': 'healthy', 'mongodb': 'connected'}), 200
+        return jsonify({
+            'status': 'healthy',
+            'mongodb': 'connected',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 200
     except Exception as e:
-        return jsonify({'status': 'unhealthy', 'error': str(e)}), 500
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
 
 
 if __name__ == '__main__':
