@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weekly Event Update</title>
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+    <h1 style="color: #2c3e50;">Weekly Event Update</h1>
+    <p>Here are the upcoming events for this week:</p>
+    {% for event in events %}
+    <div style="margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 10px;">
+        <h2 style="color: #3498db; margin-bottom: 5px;">{{ event.name }}</h2>
+        <p><strong>Date and Time:</strong> {{ event.start_time }}</p>
+        <p><strong>Venue:</strong> {{ event.venue.name }}</p>
+        {% if event.description %}
+        <p>{{ event.description }}</p>
+        {% endif %}
+    </div>
+    {% endfor %}
+    <p>Best regards,<br>Your Event Team</p>
+</body>
+</html>
