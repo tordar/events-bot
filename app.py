@@ -114,8 +114,8 @@ def send_weekly_updates():
 
     try:
         # Fetch new events
-        events = fetch_new_events()
-        if not events:
+        all_events = fetch_new_events()
+        if not all_events:
             print("No events to send")
             return
 
@@ -124,15 +124,28 @@ def send_weekly_updates():
 
         for subscriber in subscribers:
             try:
-                html_content = render_template('email_template.html', events=events)
-                message = Mail(
-                    from_email=FROM_EMAIL,
-                    to_emails=subscriber['email'],
-                    subject='Weekly Event Update',
-                    html_content=html_content
-                )
-                response = sendgrid_client.send(message)
-                print(f"Weekly update sent to {subscriber['email']}. Status Code: {response.status_code}")
+                # Filter events based on subscriber preferences
+                preferred_venues = subscriber.get('venues', [])
+                preferred_genres = subscriber.get('genres', [])
+
+                filtered_events = []
+                for event in all_events:
+                    venue_match = not preferred_venues or event['venue']['name'] in preferred_venues
+                    genre_match = not preferred_genres or any(tag in preferred_genres for tag in event.get('tags', []))
+
+                    if venue_match and genre_match:
+                        filtered_events.append(event)
+
+                if filtered_events:
+                    html_content = render_template('email_template.html', events=filtered_events)
+                    message = Mail(
+                        from_email=FROM_EMAIL,
+                        to_emails=subscriber['email'],
+                        subject='Weekly Event Update',
+                        html_content=html_content
+                    )
+                    response = sendgrid_client.send(message)
+                    print(f"Weekly update sent to {subscriber['email']}. Status Code: {response.status_code}")
             except Exception as e:
                 print(f"Error sending weekly update to {subscriber['email']}: {str(e)}")
 
@@ -196,11 +209,15 @@ def subscribe():
 
     data = request.json
     email = data.get('email')
+    venues = data.get('venues', [])
+    genres = data.get('genres', [])
 
     try:
         subscriber = {
             'email': email,
-            'subscribed_at': datetime.utcnow()
+            'subscribed_at': datetime.utcnow(),
+            'venues': venues,
+            'genres': genres
         }
         result = subscribers_collection.insert_one(subscriber)
 
