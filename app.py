@@ -282,10 +282,10 @@ def test_weekly_email(email):
         # Fetch events
         all_events = fetch_new_events()
 
-        # Get preferences, defaulting to empty lists
-        preferences = subscriber.get('preferences', {})
-        preferred_venues = preferences.get('venues', [])
-        preferred_genres = preferences.get('genres', [])
+
+        # Get preferences - handle both old and new structure
+        preferred_venues = subscriber.get('preferences', {}).get('venues', []) or subscriber.get('venues', [])
+        preferred_genres = subscriber.get('preferences', {}).get('genres', []) or subscriber.get('genres', [])
 
         # Check if any preferences are set
         if not preferred_venues and not preferred_genres:
