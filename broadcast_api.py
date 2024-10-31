@@ -8,7 +8,7 @@ import logging
 
 class BroadcastAPI:
     def __init__(self, cache_duration_minutes: int = 60):
-        self.base_url = "https://www.broadcast.events/api/queryAllEventsByRegion_vM?&region=Oslo&published=true&start_time=2024-10-29T09:00&limit=5000&skip=0"
+        self.base_url = "https://www.broadcast.events/api/queryAllEventsByRegion_vM?&region=Oslo&published=true&limit=5000&skip=0"
         self.headers = {
             'User-Agent': 'Friendly Python Script - Personal Use Only - Contact tordar.tommervik@gmail.com',
             'Accept': 'application/json'
