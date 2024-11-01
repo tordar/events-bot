@@ -1,6 +1,7 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, url_for
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
+from itsdangerous import URLSafeTimedSerializer
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -20,6 +21,9 @@ load_dotenv()
 # Initialize Flask with explicit template folder
 template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'templates'))
 app = Flask(__name__, template_folder=template_dir)
+
+# Initialize the serializer for creating secure tokens
+serializer = URLSafeTimedSerializer(os.getenv('SECRET_KEY'))
 
 # MongoDB setup with SSL configuration
 MONGO_URI = os.getenv('MONGO_URI')
@@ -152,9 +156,16 @@ def send_weekly_updates():
                         filtered_events.append(event)
 
                 if filtered_events:
+                    # Generate a secure unsubscribe token
+                    unsubscribe_token = serializer.dumps(subscriber['email'], salt='unsubscribe-salt')
+                    unsubscribe_url = url_for('unsubscribe', token=unsubscribe_token, _external=True)
+                    print(f"Debug: Generated unsubscribe URL for {subscriber['email']}: {unsubscribe_url}")
                     html_content = render_template('email_template.html',
                                                    events=filtered_events,
-                                                   email=subscriber['email'])
+                                                   email=subscriber['email'],
+                                                   unsubscribe_url=unsubscribe_url)
+                    print(
+                        f"Debug: Rendered email content. Unsubscribe URL present: {'unsubscribe_url' in html_content}")
                     message = Mail(
                         from_email=FROM_EMAIL,
                         to_emails=subscriber['email'],
@@ -162,6 +173,7 @@ def send_weekly_updates():
                         html_content=html_content
                     )
                     response = sendgrid_client.send(message)
+
                     print(
                         f"Weekly update sent to {subscriber['email']} with {len(filtered_events)} events. Status: {response.status_code}")
                 else:
@@ -302,12 +314,26 @@ def subscribe():
             return jsonify({'message': 'Already subscribed'}), 400
         return jsonify({'message': f'Error subscribing: {str(e)}'}), 500
 
+@app.route('/unsubscribe/<token>')
+def unsubscribe(token):
+    try:
+        email = serializer.loads(token, salt='unsubscribe-salt', max_age=604800)  # Token valid for 1 week
+        result = subscribers_collection.delete_one({'email': email})
+        if result.deleted_count > 0:
+            return render_template('unsubscribe_success.html')
+        else:
+            return render_template('unsubscribe_error.html', message="Subscriber not found.")
+    except:
+        return render_template('unsubscribe_error.html', message="Invalid or expired unsubscribe link.")
 
 @app.route('/test-weekly-email/<email>')
 def test_weekly_email(email):
     try:
         # First, verify this is a subscriber
         subscriber = subscribers_collection.find_one({'email': email})
+        unsubscribe_token = serializer.dumps(subscriber['email'], salt='unsubscribe-salt')
+        unsubscribe_url = url_for('unsubscribe', token=unsubscribe_token, _external=True)
+        print(f"Debug: Generated unsubscribe URL for {subscriber['email']}: {unsubscribe_url}")
         if not subscriber:
             return jsonify({
                 'status': 'error',
@@ -369,7 +395,8 @@ def test_weekly_email(email):
         # Send email with filtered events
         html_content = render_template('email_template.html',
                                        events=filtered_events,
-                                       email=email)
+                                       email=email,
+                                        unsubscribe_url=unsubscribe_url)
         message = Mail(
             from_email=FROM_EMAIL,
             to_emails=email,
