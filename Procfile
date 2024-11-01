@@ -1,1 +1,1 @@
-web: gunicorn app:app --config gunicorn.conf.py --timeout 120
+web: gunicorn app:create_app()

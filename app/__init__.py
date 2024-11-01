@@ -11,7 +11,7 @@ db = MongoEngine()
 scheduler = BackgroundScheduler()
 serializer = URLSafeTimedSerializer(os.getenv('SECRET_KEY'))
 
-def create_app(config_object):
+def create_app(config_object=None):
     app = Flask(__name__)
     app.config.from_object(config_object)
 
