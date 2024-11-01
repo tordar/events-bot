@@ -24,6 +24,7 @@ def main():
 
     print("Fetching upcoming events ...")
     all_events = api.get_upcoming_events()
+    #api.update_venues_and_tags()
 
 
     print("\nAll upcoming events:")

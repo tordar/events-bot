@@ -1,3 +1,4 @@
+
 from flask import Flask, render_template, request, jsonify, url_for
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
@@ -17,6 +18,9 @@ from dateutil import parser
 
 # Load environment variables
 load_dotenv()
+
+# Initialise BroadcastAPI
+broadcast_api = BroadcastAPI()
 
 # Initialize Flask with explicit template folder
 template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'templates'))
@@ -229,9 +233,8 @@ def index():
 @app.route('/get_venues')
 def get_venues():
     try:
-        with open('venue_names.json', 'r') as f:
-            venues = json.load(f)
-        return jsonify(venues)
+        venues = broadcast_api.get_all_venues()
+        return jsonify({'venue_names': venues})
     except Exception as e:
         print(f"Error loading venues: {str(e)}")
         return jsonify({'venue_names': []}), 500
@@ -239,9 +242,8 @@ def get_venues():
 @app.route('/get_genres')
 def get_genres():
     try:
-        with open('distinct_tags.json', 'r') as f:
-            genres = json.load(f)
-        return jsonify(genres)
+        tags = broadcast_api.get_all_tags()
+        return jsonify({'tags': tags})
     except Exception as e:
         print(f"Error loading genres: {str(e)}")
         return jsonify({'tags': []}), 500

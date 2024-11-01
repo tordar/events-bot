@@ -4,7 +4,15 @@ from datetime import datetime
 import json
 from typing import List, Dict, Optional, Set
 import logging
+import os
+from dotenv import load_dotenv
+from pymongo import MongoClient, UpdateOne
+from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+import certifi
 
+
+# Load environment variables
+load_dotenv()
 
 class BroadcastAPI:
     def __init__(self, cache_duration_minutes: int = 60):
@@ -16,6 +24,32 @@ class BroadcastAPI:
         self.cache_file = 'broadcast_cache.json'
         self.cache_duration_minutes = cache_duration_minutes
         self.setup_logging()
+        self.mongo_uri = os.getenv('MONGO_URI')
+        if not self.mongo_uri:
+            raise ValueError("MONGO_URI environment variable is not set")
+
+        self.client = None
+        self.db = None
+        self.venues_collection = None
+        self.tags_collection = None
+        self.connect_to_mongodb()
+
+    def connect_to_mongodb(self):
+        try:
+            # Use certifi to ensure secure connection
+            self.client = MongoClient(self.mongo_uri, tlsCAFile=certifi.where())
+            # Test the connection
+            self.client.admin.command('ping')
+            self.db = self.client['event_subscription_db']
+            self.venues_collection = self.db['venues']
+            self.tags_collection = self.db['tags']
+            self.logger.info("Successfully connected to MongoDB Atlas")
+        except (ConnectionFailure, ServerSelectionTimeoutError) as e:
+            self.logger.error(f"Failed to connect to MongoDB Atlas: {e}")
+            self.client = None
+            self.db = None
+            self.venues_collection = None
+            self.tags_collection = None
 
     def setup_logging(self):
         logging.basicConfig(
@@ -91,9 +125,13 @@ class BroadcastAPI:
         events = self.get_events()
         extracted_events = [self.extract_event_info(event) for event in events]
 
+        # Update venues and tags in MongoDB
+        self.update_venues_and_tags(extracted_events)
+
         if max_events:
             return extracted_events[:max_events]
         return extracted_events
+
 
 
     def extract_distinct_tags(self, output_file: str = 'distinct_tags.json') -> Set[str]:
@@ -145,3 +183,39 @@ class BroadcastAPI:
 
         self.logger.info(f"Extracted {len(venue_names)} distinct venue names and saved to {output_file}")
         return sorted_venue_names
+
+    def update_venues_and_tags(self, events: List[Dict]):
+        if not self.venues_collection or not self.tags_collection:
+            self.logger.error("MongoDB collections are not available. Attempting to reconnect...")
+
+        venues = set()
+        tags = set()
+
+        for event in events:
+            if event['venue']['name']:
+                venues.add(event['venue']['name'])
+            tags.update(event['tags'])
+
+        # Update venues
+        venue_operations = [
+            UpdateOne({'name': venue}, {'$set': {'name': venue}}, upsert=True)
+            for venue in venues
+        ]
+        if venue_operations:
+            self.venues_collection.bulk_write(venue_operations)
+            self.logger.info(f"Updated {len(venues)} venues in MongoDB")
+
+        # Update tags
+        tag_operations = [
+            UpdateOne({'name': tag}, {'$set': {'name': tag}}, upsert=True)
+            for tag in tags
+        ]
+        if tag_operations:
+            self.tags_collection.bulk_write(tag_operations)
+            self.logger.info(f"Updated {len(tags)} tags in MongoDB")
+
+    def get_all_venues(self) -> List[str]:
+        return [venue['name'] for venue in self.venues_collection.find({}, {'name': 1, '_id': 0})]
+
+    def get_all_tags(self) -> List[str]:
+        return [tag['name'] for tag in self.tags_collection.find({}, {'name': 1, '_id': 0})]
