@@ -24,7 +24,8 @@ def main():
 
     print("Fetching upcoming events ...")
     all_events = api.get_upcoming_events()
-
+    api.extract_venue_names()
+    api.extract_distinct_tags()
 
     print("\nAll upcoming events:")
     print("-" * 50)
