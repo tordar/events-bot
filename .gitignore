@@ -45,8 +45,6 @@ ENV/
 # Application specific
 broadcast_cache.json
 rockefeller_cache.json
-distinct_tags.json
-venue_names.json
 *.log
 logs/
 *.db
