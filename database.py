@@ -1,4 +1,3 @@
-from apscheduler.triggers.cron import CronTrigger
 from flask import Flask
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
@@ -11,10 +10,7 @@ load_dotenv()
 
 # MongoDB setup with SSL configuration
 MONGO_URI = os.getenv('MONGO_URI')
-# Global variables
-client = None
-db = None
-subscribers_collection = None
+
 
 def init_mongodb():
     try:
@@ -45,17 +41,24 @@ def init_mongodb():
 
     return None
 
+
 def create_app():
     app = Flask(__name__)
 
-    # Initialize services
-    init_mongodb()
+    # Initialize MongoDB
+    client, db, subscribers_collection = init_mongodb()
+
+    if not all([client, db, subscribers_collection]):
+        raise RuntimeError("Failed to initialize MongoDB. Application cannot start.")
+
+    # Store MongoDB connection in app config
+    app.config['MONGO_CLIENT'] = client
+    app.config['MONGO_DB'] = db
+    app.config['SUBSCRIBERS_COLLECTION'] = subscribers_collection
+
 
     return app
 
-
-# Create the Flask app
-app = create_app()
-
 if __name__ == '__main__':
+    app = create_app()
     app.run(debug=True)
