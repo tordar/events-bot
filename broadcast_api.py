@@ -4,11 +4,17 @@ from datetime import datetime
 import json
 from typing import List, Dict, Optional, Set
 import logging
+import os
+from dotenv import load_dotenv
 
+#Load environment variables
+load_dotenv()
+
+broadcast_api_key = os.getenv('BROADCAST_API_KEY')
 
 class BroadcastAPI:
     def __init__(self, cache_duration_minutes: int = 60):
-        self.base_url = "https://www.broadcast.events/api/queryAllEventsByRegion_vM?&region=Oslo&published=true&limit=5000&skip=0"
+        self.base_url = f"https://api.broadcastapp.no/v1/public/events/region?key={broadcast_api_key}"
         self.headers = {
             'User-Agent': 'Friendly Python Script - Personal Use Only - Contact tordar.tommervik@gmail.com',
             'Accept': 'application/json'
@@ -70,13 +76,16 @@ class BroadcastAPI:
         return {
             'id': event.get('id'),
             'name': event.get('name'),
-            'start_time': event.get('start_time'),
+            'venue_name': event.get('venueName'),
+            'start_time': event.get('startTime'),
+            'cover_charge_label': event.get('coverChargeLabel'),
             'end_time': custom_fields.get('end_time'),
             'tags': event.get('tags', []),
             'age_limit': custom_fields.get('age'),
             'sold_out': custom_fields.get('soldOut', False),
             'ticket_url': custom_fields.get('ticketUrl'),
             'cover_charge': custom_fields.get('coverCharge', custom_fields.get('cover', 'Price not listed')),
+
             'venue': {
                 'name': place.get('name'),
                 'address': place.get('address'),
@@ -131,8 +140,7 @@ class BroadcastAPI:
         venue_names = set()
 
         for event in events:
-            place = event.get('place', {})
-            venue_name = place.get('name')
+            venue_name = event.get('venueName')
             if venue_name:
                 venue_names.add(venue_name)
 

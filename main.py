@@ -8,15 +8,12 @@ def display_events(events):
     for event in events:
         print(f"\n🎵 {event['name']}")
         print(f"📅 {event['start_time'][:10] if event['start_time'] else 'Date not set'}")
-        print(f"💰 {event['cover_charge'] if event['cover_charge'] else 'Price not listed'}")
+        print(f"💰 {event['cover_charge_label'] if event['cover_charge_label'] else 'Price not listed'}")
         print(f"🎫 {'SOLD OUT!' if event.get('sold_out') else 'Tickets available'}")
+        print(f"📍 {event['venue_name'] if event['venue_name'] else 'Venue not specified'}")
         if event.get('tags'):
             print(f"🏷️  {', '.join(event['tags'])}")
             # Add venue information
-            if event['venue'] and event['venue'].get('name'):
-                print(f"📍 {event['venue']['name']}")
-            else:
-                print("📍 Venue not specified")
     print(f"\nTotal number of events: {len(events)}")
 
 def main():
